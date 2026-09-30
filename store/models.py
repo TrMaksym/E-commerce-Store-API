@@ -8,7 +8,7 @@ class Product(models.Model):
     name = models.CharField(max_length=250)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=7, decimal_places=2)
-    amount = models.PositiveIntegerField(default=0)
+    quantity = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -45,6 +45,10 @@ class OrderItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)
     price = models.DecimalField(max_digits=7, decimal_places=2)
+
+    @property
+    def total_cost_one_position(self):
+        return self.price * self.quantity
 
     def __str__(self):
         return f"{self.quantity} of {self.product.name}"
