@@ -47,9 +47,34 @@ class OrderSerializer(serializers.ModelSerializer):
             order = Order.objects.create(total_price=0, **validated_data)
             total_price = 0
             order_items = []
-            for items in items_data:
-                product = items_data["product"]
-                quantity = items_data["quantity"]
+
+            for item in items_data:
+                product = item["product"]
+                quantity = item["quantity"]
+
+                if product.quantity < quantity:
+                    raise serializers.ValidationError(
+                        f"Insufficient quantity for product {product.name}"
+                    )
+
+                product.quantity -= quantity
+                product.save(update_fields=["quantity"])
+
+                total_price += product.price * quantity
+
+                order_items.append(
+                    OrderItem(
+                        order=order,
+                        product=product,
+                        quantity=quantity,
+                        price=product.price,
+                    )
+                )
+            OrderItem.object.bulk_create(order_items)
+            order.total_price = total_price
+            order.save(update_fields=["total_price"])
+
+            return order
 
 
 
