@@ -28,8 +28,8 @@ class Order(models.Model):
         blank=True,
         related_name='orders'
     )
-    first_name = models.CharField(max_lenght=100)
-    last_name = models.CharField(max_lenght=100)
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
     email = models.EmailField()
     address = models.CharField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
