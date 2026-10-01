@@ -64,7 +64,7 @@ class Migration(migrations.Migration):
                 ("total_price", models.DecimalField(decimal_places=2, max_digits=7)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 (
-                    "user",
+                    "users",
                     models.ForeignKey(
                         blank=True,
                         null=True,
