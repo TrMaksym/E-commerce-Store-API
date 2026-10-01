@@ -1,8 +1,7 @@
-from django.shortcuts import render
 from rest_framework import mixins, viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from store.models import Order
+from store.models.orders import Order
 from store.serializers import OrderSerializer
 
 

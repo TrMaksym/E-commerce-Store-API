@@ -1,5 +1,4 @@
 from django.db import transaction
-from redis.commands.search.reducers import quantile
 from rest_framework import serializers
 
 from store.models import Product, OrderItem, Order
@@ -29,7 +28,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             "id",
-            "user",
+            "users",
             "first_name",
             "last_name",
             "email",
@@ -39,7 +38,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "total_price",
             "created_at",
         ]
-        read_only_fields = ["user", "status", "total_price", "created_at"]
+        read_only_fields = ["users", "status", "total_price", "created_at"]
 
         @transaction.atomic
         def create(self, validated_data):
@@ -75,6 +74,3 @@ class OrderSerializer(serializers.ModelSerializer):
             order.save(update_fields=["total_price"])
 
             return order
-
-
-
