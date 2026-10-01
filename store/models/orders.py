@@ -79,3 +79,13 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.variant} x {self.quantity}"
+
+class OrderStatusHistory(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_history")
+    old_status = models.CharField(max_length=20, choices=Order.Status.choices)
+    new_status = models.CharField(max_length=20, choices=Order.Status.choices)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    comment = models.CharField(max_length=255, blank=True)
+
+    def __str__(self):
+        return f"Order #{self.order_id}: {self.old_status} -> {self.new_status}"
