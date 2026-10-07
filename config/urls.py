@@ -8,7 +8,8 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
-from store.views import ProductViewSet, CategoryViewSet, BrandViewSet, OrderViewSet, AddressViewSet
+from store.views import ProductViewSet, CategoryViewSet, BrandViewSet, OrderViewSet, AddressViewSet, WishlistViewSet, \
+    ReviewViewSet
 
 router = DefaultRouter()
 router.register(r'products', ProductViewSet, basename='products')
@@ -16,8 +17,8 @@ router.register(r'categories', CategoryViewSet, basename='categories')
 router.register(r'brands', BrandViewSet, basename='brands')
 router.register(r'orders', OrderViewSet, basename='orders')
 router.register(r'addresses', AddressViewSet, basename='addresses')
-# router.register(r'wishlist', WishlistViewSet, basename='wishlist')
-# router.register(r'reviews', ReviewViewSet, basename='reviews')
+router.register(r'wishlist', WishlistViewSet, basename='wishlist')
+router.register(r'reviews', ReviewViewSet, basename='reviews')
 
 urlpatterns = [
     path("admin/", admin.site.urls),

@@ -16,7 +16,7 @@ from store.serializers import (
     OrderSerializer,
     ProductDetailSerializer,
     ProductListSerializer,
-    ReviewSerializer,
+    ReviewSerializer, WishlistSerializer,
 )
 
 from .models import Address, Brand, Category, Product, Review
@@ -132,3 +132,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().destroy(request, *args, **kwargs)
+
+
+class WishlistViewSet(viewsets.ModelViewSet):
+    serializer_class = WishlistSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        queryset = WishlistViewSet.objects.select_related("user", "product")
+        if self.request.user.is_staff:
+            return queryset
+        return queryset.filter(user=self.request.user)
