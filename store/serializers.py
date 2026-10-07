@@ -1,76 +1,146 @@
-from django.db import transaction
 from rest_framework import serializers
 
-from store.models import Product, OrderItem, Order
+from store.models import Category, Brand, ProductVariant, ProductImage, Address, Wishlist, Product, Order, OrderItem, \
+    OrderStatusHistory, Payment, Coupon, Review
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ("id", "name", "slug", "parent")
+
+
+class BrandSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Brand
+        fields = ("id", "name", "slug", "description")
+
+
+class ProductVariantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductVariant
+        fields = ("id", "sku", "name", "price", "quantity", "is_active")
+
+class ProductImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ("id", "image", "is_feature", "alt_text")
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    brand = BrandSerializer(read_only=True)
+    variants = ProductVariantSerializer(many=True, read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
+
+
+class AddressSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Product
-        fields = ["id", "name", "price", "description", "amount", "created_at", ]
+        model = Address
+        fields = (
+            "id",
+            "first_name",
+            "last_name",
+            "country",
+            "city",
+            "street_address",
+            "postal_code",
+            "phone_number",
+            "is_default",
+        )
+
+    def create(self, validated_data):
+        validated_data["user"] = self.context["request"].user
+        return super().create(validated_data)
+
+
+class WishlistSerializer(serializers.ModelSerializer):
+    product = ProductSerializer(read_only=True)
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(), write_only=True
+    )
+
+    class Meta:
+        model = Wishlist
+        fields = ("id", "product", "created_at")
+
+    def create(self, validated_data):
+        validated_data["user"] = self.context["request"].user
+        return super().create(validated_data)
+
 
 class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
-        fields = [
-            "id",
-            "product",
-            "quantity",
-            "price",
-            "total_cost_one_position",
-        ]
-        read_only_fields = ["total_cost_one_position", "price"]
+        fields = ("id", "variant", "price", "quantity", "cost")
+
 
 class OrderSerializer(serializers.ModelSerializer):
-    items = OrderItemSerializer(many=True)
+    items = OrderItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Order
-        fields = [
+        fields = (
             "id",
-            "users",
-            "first_name",
-            "last_name",
-            "email",
-            "address",
+            "user",
             "status",
-            "items",
+            "coupon",
+            "shipping_address",
+            "contact_phone",
+            "contact_email",
+            "subtotal_price",
+            "discount_amount",
             "total_price",
+            "items",
             "created_at",
-        ]
-        read_only_fields = ["users", "status", "total_price", "created_at"]
+        )
 
-        @transaction.atomic
-        def create(self, validated_data):
-            items_data = validated_data.pop("items")
-            order = Order.objects.create(total_price=0, **validated_data)
-            total_price = 0
-            order_items = []
 
-            for item in items_data:
-                product = item["product"]
-                quantity = item["quantity"]
+class OrderStatusHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderStatusHistory
+        fields = ("id", "old_status", "new_status", "changed_at", "comment")
 
-                if product.quantity < quantity:
-                    raise serializers.ValidationError(
-                        f"Insufficient quantity for product {product.name}"
-                    )
 
-                product.quantity -= quantity
-                product.save(update_fields=["quantity"])
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = (
+            "id",
+            "order",
+            "provider",
+            "transaction_id",
+            "status",
+            "amount",
+            "created_at"
+        )
+        read_only_fields = fields
 
-                total_price += product.price * quantity
 
-                order_items.append(
-                    OrderItem(
-                        order=order,
-                        product=product,
-                        quantity=quantity,
-                        price=product.price,
-                    )
-                )
-            OrderItem.object.bulk_create(order_items)
-            order.total_price = total_price
-            order.save(update_fields=["total_price"])
+class CouponSerializer(serializers.ModelSerializer):
+    is_valid = serializers.SerializerMethodField()
 
-            return order
+    class Meta:
+        model = Coupon
+        fields = ("id", "code", "discount_percentage", "valid_from", "valid_to", "is_valid")
+
+    def get_is_valid(self, obj):
+        return obj.is_valid()
+
+    def validate(self, attrs):
+        valid_from = attrs.get("valid_from") or (self.instance.valid_from if self.instance else None)
+        valid_to = attrs.get("valid_to") or (self.instance.valid_to if self.instance else None)
+
+        if valid_from and valid_to:
+            if valid_from >= valid_to:
+                raise serializers.ValidationError({"valid_to": "Valid from date must be before valid to date."})
+        return attrs
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    user = serializers.ReadOnlyField(source="user.email")
+
+    class Meta:
+        model = Review
+        fields = ("id", "product", "user", "rating", "comment", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
