@@ -19,7 +19,7 @@ from store.serializers import (
     ReviewSerializer, WishlistSerializer,
 )
 
-from .models import Address, Brand, Category, Product, Review
+from .models import Address, Brand, Category, Product, Review, Wishlist
 from .permissions import (
     IsAdminOrReadOnly,
     IsOwnerOrAdmin,
@@ -73,10 +73,14 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
 
 class AddressViewSet(viewsets.ModelViewSet):
+    queryset = Address.objects.all()
     serializer_class = AddressSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Address.objects.none()
+
         if self.request.user.is_staff:
             return Address.objects.all()
         return Address.objects.filter(user=self.request.user)
@@ -86,6 +90,9 @@ class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Order.objects.none()
+
         base_qs = (
             Order.objects.prefetch_related("items__variant")
             .select_related("user", "coupon")
@@ -135,12 +142,20 @@ class OrderViewSet(viewsets.ModelViewSet):
 
 
 class WishlistViewSet(viewsets.ModelViewSet):
+    queryset = Wishlist.objects.all()
     serializer_class = WishlistSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):
-        queryset = WishlistViewSet.objects.select_related("user", "product")
+        if getattr(self, "swagger_fake_view", False):
+            return Wishlist.objects.none()
+
+        qs = (
+            Wishlist.objects.filter(user=self.request.user)
+            .select_related("user", "product")
+        )
+
         if self.request.user.is_staff:
-            return queryset
-        return queryset.filter(user=self.request.user)
+            return Wishlist.objects.select_related("user", "product")
+        return qs

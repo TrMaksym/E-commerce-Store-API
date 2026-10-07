@@ -119,9 +119,14 @@ class WishlistSerializer(serializers.ModelSerializer):
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
+    cost = serializers.SerializerMethodField()
+
     class Meta:
         model = OrderItem
         fields = ("id", "variant", "price", "quantity", "cost")
+
+    def get_cost(self, obj) -> Decimal:
+        return obj.cost
 
 
 class OrderSerializer(serializers.ModelSerializer):
