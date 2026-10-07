@@ -31,7 +31,7 @@ class Product(models.Model):
     category = models.ForeignKey(
         Category, on_delete=models.PROTECT, related_name="products"
     )
-    Brand = models.ForeignKey(
+    brand = models.ForeignKey(
         Brand,
         on_delete=models.PROTECT,
         null=True,
