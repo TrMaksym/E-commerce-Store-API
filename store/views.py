@@ -1,12 +1,15 @@
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+import stripe
 from rest_framework.permissions import (
     AllowAny,
     IsAuthenticated,
     IsAuthenticatedOrReadOnly,
 )
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from config import settings
 from store.models.orders import Order
 from store.serializers import (
     AddressSerializer,
@@ -19,7 +22,7 @@ from store.serializers import (
     ReviewSerializer, WishlistSerializer,
 )
 
-from .models import Address, Brand, Category, Product, Review, Wishlist
+from .models import Address, Brand, Category, Product, Review, Wishlist, Payment
 from .permissions import (
     IsAdminOrReadOnly,
     IsOwnerOrAdmin,
@@ -119,8 +122,65 @@ class OrderViewSet(viewsets.ModelViewSet):
         )
     @action(detail=True, methods=["post"], permission_classes=[AllowAny])
     def pay(self, request, pk=None):
+        order = Order.objects.filter(pk=pk).first()
+        if not order:
+            Response(
+                {"detail": "Order not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        if order.user is not None:
+            if request.user != order.user and not request.user.is_staff:
+                return Response(
+                    {"detail": "You hav'nt permission to perform this action."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
+        else:
+            guest_email = request.data.get("email")
+            if not guest_email or guest_email.lower() != order.contact_email.lower():
+                return Response(
+                    {"detail": "contact_email is not valid for this order."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        if order.status != Order.Status.PENDING:
+            return Response(
+                {"detail": "Order is not pending payment"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        amount_cents = int(order.total_price * 100)
+        try:
+            session = stripe.checkout.Session.create(
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "unit_amount": amount_cents,
+                            "product_data": {
+                                "name": f"Order #{order.id}",
+                            },
+                        },
+                        "quantity": 1
+                    }
+                ],
+                mode="payment",
+                metadata={"order_id": str(order.id)},
+                success_url=f"{request.build_absolute_uri()}/success/",
+                cancel_url=f"{request.build_absolute_uri()}/cancel/",
+            )
+        except Exception as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        Payment.objects.create(
+            order=order,
+            prodiver="stripe",
+            transaction_id=session.id,
+            amount=order.total_price,
+            status="pending"
+        )
+        return Response({"checkout_url": session.url}, status=status.HTTP_200_OK)
 
     def create(self, request, *args, **kwargs):
         return Response(
@@ -144,6 +204,34 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         return super().destroy(request, *args, **kwargs)
 
+
+class StripeWebhookView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        payload = request.body
+        sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            )
+        except (ValueError, stripe.error.SignatureVerificationError):
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            order_id = session.get("metadata", {}).get("order_id")
+            order = Order.objects.filter(id=order_id).first()
+            if order:
+                order.status = Order.Status.PAID
+                order.save()
+
+            payment = Payment.objects.filter(transaction_id=session["id"]).first()
+            if payment:
+                payment.status = Payment.Status.PAID
+                payment.save()
+
+        return Response(status=status.HTTP_200_OK)
 
 class WishlistViewSet(viewsets.ModelViewSet):
     queryset = Wishlist.objects.all()

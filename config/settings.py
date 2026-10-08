@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/6.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
-
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     "store",
     "users"
 ]
+
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
