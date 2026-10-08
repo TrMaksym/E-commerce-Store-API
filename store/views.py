@@ -117,6 +117,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(
             OrderSerializer(order).data, status=status.HTTP_201_CREATED
         )
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny])
+    def pay(self, request, pk=None):
+
+
 
     def create(self, request, *args, **kwargs):
         return Response(
