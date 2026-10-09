@@ -1,7 +1,10 @@
 import stripe
+from django.db.models import F
+from django.db import transaction
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import (
     AllowAny,
     IsAuthenticated,
@@ -49,6 +52,10 @@ class BrandViewSet(viewsets.ModelViewSet):
 @extend_schema(tags=["Products"])
 class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAdminOrReadOnly,)
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "price", "created_at"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
         if self.request.user.is_staff:
@@ -276,14 +283,24 @@ class StripeWebhookView(APIView):
             session = event["data"]["object"]
             order_id = session.get("metadata", {}).get("order_id")
             order = Order.objects.filter(id=order_id).first()
-            if order:
-                order.status = Order.Status.PAID
-                order.save()
 
-            payment = Payment.objects.filter(transaction_id=session["id"]).first()
-            if payment:
-                payment.status = Payment.Status.PAID
-                payment.save()
+            if order and order.status != Order.Status.PAID:
+                with transaction.atomic():
+                    order.status = Order.Status.PAID
+                    order.save(update_fields=["status"])
+
+                    if order.coupon:
+                        order.coupon.times_used = F("times_used") + 1
+                        order.coupon.save(update_fields=["times_used"])
+
+                    for item in order.items.select_related("variant"):
+                        item.variant.stock = F("stock") - item.quantity
+                        item.variant.save(update_fields=["stock"])
+
+                    payment = Payment.objects.filter(transaction_id=session["id"]).first()
+                    if payment:
+                        payment.status = Payment.Status.PAID
+                        payment.save(update_fields=["status"])
 
         return Response(status=status.HTTP_200_OK)
 
