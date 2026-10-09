@@ -21,10 +21,10 @@ from store.serializers import (
     ProductDetailSerializer,
     ProductListSerializer,
     ReviewSerializer,
-    WishlistSerializer,
+    WishlistSerializer, CouponSerializer,
 )
 
-from .models import Address, Brand, Category, Payment, Product, Review, Wishlist
+from .models import Address, Brand, Category, Payment, Product, Review, Wishlist, Coupon
 from .permissions import (
     IsAdminOrReadOnly,
     IsOwnerOrAdmin,
@@ -307,3 +307,30 @@ class WishlistViewSet(viewsets.ModelViewSet):
         if self.request.user.is_staff:
             return Wishlist.objects.select_related("user", "product")
         return qs
+
+
+@extend_schema(tags=["Coupons"])
+class CouponViewSet(viewsets.ModelViewSet):
+    queryset = Coupon.objects.all()
+    serializer_class = CouponSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    @extend_schema(tags=["Coupons"])
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def validate(self, request):
+        code = request.data.get("code")
+        if not code:
+            return Response({"detail": "Coupon code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        coupon = Coupon.objects.filter(code=code).first()
+
+        if not coupon:
+            return Response({"detail": "Invalid coupon code."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not coupon.is_valid():
+            return Response({"detail": "Coupon is expired or inactive."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "code": coupon.code,
+            "discount_percentage": coupon.discount_percentage,
+        })
