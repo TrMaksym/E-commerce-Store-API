@@ -238,8 +238,15 @@ class CheckoutSerializer(serializers.Serializer):
     coupon_code = serializers.CharField(required=False, allow_blank=True)
     items = CheckoutItemSerializer(many=True)
 
+    def validate_shipping_id(self, value):
+        request = self.context.get("request")
+        if request and request.user.is_authenticated and not request.user.is_staff:
+            if value.user != request.user:
+                raise serializers.ValidationError("You cannot use another user's address.")
+        return value
+
     def validate_items(self, items):
-        if len(items) == 0:
+        if not items:
             raise serializers.ValidationError("Cart cannot be empty.")
 
         for item in items:
@@ -249,7 +256,9 @@ class CheckoutSerializer(serializers.Serializer):
             if quantity <= 0:
                 raise serializers.ValidationError(f"Quantity for variant {variant.id} must be greater than 0.")
             if variant.quantity < quantity:
-                raise serializers.ValidationError(f"Insufficient quantity for variant {variant.id}. Available: {variant.quantity}.")
+                raise serializers.ValidationError(
+                    f"Insufficient quantity for variant {variant.name}. Available: {variant.quantity}."
+                )
 
         return items
 
@@ -260,7 +269,7 @@ class CheckoutSerializer(serializers.Serializer):
         user = request.user if request and request.user.is_authenticated else None
 
         subtotal_price = sum(item["variant"].price * item["quantity"] for item in items)
-        discount_amount = 0
+        discount_amount = Decimal("0.00")
         coupon = None
 
         if coupon_code:
@@ -268,10 +277,9 @@ class CheckoutSerializer(serializers.Serializer):
                 found_coupon = Coupon.objects.get(code=coupon_code)
                 if found_coupon.is_valid():
                     coupon = found_coupon
-                    discount_amount = round(
-                        (subtotal_price * Decimal(found_coupon.discount_percentage)) / Decimal(100),
-                        2
-                    )
+                    discount_amount = (
+                        (subtotal_price * Decimal(found_coupon.discount_percentage)) / Decimal(100)
+                    ).quantize(Decimal("0.01"))
             except Coupon.DoesNotExist:
                 pass
 
@@ -299,7 +307,4 @@ class CheckoutSerializer(serializers.Serializer):
                     cost=variant.price * quantity
                 )
 
-                variant.quantity -= quantity
-                variant.save(update_fields=["quantity"])
             return order
-

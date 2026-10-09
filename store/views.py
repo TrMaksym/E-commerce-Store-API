@@ -294,8 +294,8 @@ class StripeWebhookView(APIView):
                         order.coupon.save(update_fields=["times_used"])
 
                     for item in order.items.select_related("variant"):
-                        item.variant.stock = F("stock") - item.quantity
-                        item.variant.save(update_fields=["stock"])
+                        item.variant.quantity = F("quantity") - item.quantity
+                        item.variant.save(update_fields=["quantity"])
 
                     payment = Payment.objects.filter(transaction_id=session["id"]).first()
                     if payment:
