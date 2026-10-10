@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.db import transaction
 from rest_framework import serializers
+from rest_framework.validators import UniqueTogetherValidator
 
 from store.models import (
     Category,
@@ -18,6 +19,7 @@ from store.models import (
     Coupon,
     Review,
 )
+from store.models.cart import Cart, CartItem
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -46,7 +48,12 @@ class ProductImageSerializer(serializers.ModelSerializer):
 
 class ProductListSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
-    brand_name = serializers.CharField(source="Brand.name", read_only=True)
+    brand_name = serializers.CharField(source="brand.name", read_only=True)
+    price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
 
     class Meta:
         model = Product
@@ -54,6 +61,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "slug",
+            "price",
             "is_active",
             "category_name",
             "brand_name",
@@ -62,7 +70,7 @@ class ProductListSerializer(serializers.ModelSerializer):
 
 class ProductDetailSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
-    brand = BrandSerializer(source="Brand", read_only=True)
+    brand = BrandSerializer(read_only=True)
     variants = ProductVariantSerializer(many=True, read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
 
@@ -81,6 +89,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
 
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -219,6 +228,27 @@ class ReviewSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("created_at", "updated_at")
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        product = attrs.get("product")
+
+        if self.instance is None and request and request.user.is_authenticated:
+            if Review.objects.filter(product=product, user=request.user).exists():
+                raise serializers.ValidationError(
+                    {"detail": "You have already reviewed this product"}
+                )
+            has_purchased = OrderItem.objects.filter(
+                order__user=request.user,
+                order__status="paid",
+                variant__product=product,
+            ).exists()
+            if not has_purchased:
+                raise serializers.ValidationError(
+                    {"detail": "You must purchase the product to review it."}
+                )
+        return attrs
+
+
 
 class CheckoutItemSerializer(serializers.Serializer):
     variant_id = serializers.PrimaryKeyRelatedField(
@@ -304,7 +334,57 @@ class CheckoutSerializer(serializers.Serializer):
                     variant=variant,
                     price=variant.price,
                     quantity=quantity,
-                    cost=variant.price * quantity
                 )
+                variant.quantity -= quantity
+                variant.save(update_fields=["quantity"])
 
             return order
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    variant_title = serializers.ReadOnlyField(source="variant.__str__")
+    unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = CartItem
+        fields = (
+            "id",
+            "variant",
+            "quantity",
+            "variant_title",
+            "unit_price",
+            "subtotal",
+        )
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = Cart
+        fields = (
+            "id",
+            "items",
+            "total_price",
+            "created_at",
+            "updated_at",
+        )
+
+
+class AddToCartSerializer(serializers.Serializer):
+    variant_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1, default=1)
+
+    def validate(self, attrs):
+        try:
+            variant = ProductVariant.objects.get(id=attrs["variant_id"])
+        except ProductVariant.DoesNotExist:
+            raise serializers.ValidationError({"variant_id": "Variant not found"})
+
+        if variant.quantity < attrs["quantity"]:
+            raise serializers.ValidationError({"quantity": f"Only {variant.quantity} available"})
+
+        attrs["variant"] = variant
+        return attrs

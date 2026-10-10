@@ -1,10 +1,11 @@
 import stripe
-from django.db.models import F
 from django.db import transaction
+from django.db.models import F, Min
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import (
     AllowAny,
     IsAuthenticated,
@@ -20,19 +21,24 @@ from store.serializers import (
     BrandSerializer,
     CategorySerializer,
     CheckoutSerializer,
+    CouponSerializer,
     OrderSerializer,
     ProductDetailSerializer,
     ProductListSerializer,
     ReviewSerializer,
-    WishlistSerializer, CouponSerializer,
+    WishlistSerializer, CartSerializer,
 )
 
-from .models import Address, Brand, Category, Payment, Product, Review, Wishlist, Coupon
+from .filters import ProductFilter
+from .models import Address, Brand, Category, Coupon, Payment, Product, Review, Wishlist
+from .models.cart import Cart, CartItem
 from .permissions import (
     IsAdminOrReadOnly,
     IsOwnerOrAdmin,
     IsReviewAuthorOrAdmin,
 )
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 @extend_schema(tags=["Categories"])
@@ -52,19 +58,22 @@ class BrandViewSet(viewsets.ModelViewSet):
 @extend_schema(tags=["Products"])
 class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAdminOrReadOnly,)
-    filter_backends = [SearchFilter, OrderingFilter]
+    filter_backends = [SearchFilter, OrderingFilter, DjangoFilterBackend]
+    filterset_class = ProductFilter
     search_fields = ["name", "description"]
     ordering_fields = ["name", "price", "created_at"]
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        if self.request.user.is_staff:
-            return Product.objects.all().prefetch_related("variants", "images")
-        return (
-            Product.objects.filter(is_active=True)
+        qs = (
+            Product.objects.annotate(price=Min("variants__price"))
+            .select_related("brand", "category")
             .prefetch_related("variants", "images")
-            .select_related("category", "brand")
         )
+        if self.request.user.is_staff:
+            return qs
+
+        return qs.filter(is_active=True)
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -222,8 +231,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 ],
                 mode="payment",
                 metadata={"order_id": str(order.id)},
-                success_url=f"{request.build_absolute_uri()}/success/",
-                cancel_url=f"{request.build_absolute_uri()}/cancel/",
+                success_url=f"{request.scheme}://{request.get_host()}/api/docs/?status=success",
+                cancel_url=f"{request.scheme}://{request.get_host()}/api/docs/?status=cancel",
             )
         except Exception as e:
             return Response(
@@ -340,17 +349,82 @@ class CouponViewSet(viewsets.ModelViewSet):
     def validate(self, request):
         code = request.data.get("code")
         if not code:
-            return Response({"detail": "Coupon code is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Coupon code is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         coupon = Coupon.objects.filter(code=code).first()
 
         if not coupon:
-            return Response({"detail": "Invalid coupon code."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Invalid coupon code."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         if not coupon.is_valid():
-            return Response({"detail": "Coupon is expired or inactive."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Coupon is expired or inactive."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response({
             "code": coupon.code,
             "discount_percentage": coupon.discount_percentage,
         })
+
+
+class CartViewSet(viewsets.GenericViewSet):
+    def get_cart(self):
+        cart, _ = Cart.objects.get_or_create(user=self.request.user)
+        return cart
+
+    def list(self, request):
+        cart = self.get_cart()
+        serializer = CartSerializer(cart, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["post"])
+    def add(self, request):
+        cart = self.get_cart()
+        serializer = CartSerializer(cart, data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        variant = serializer.validated_data["variant"]
+        quantity = serializer.validated_data["quantity"]
+
+        cart_item, created = CartItem.objects.get_or_create(
+            cart=cart, variant=variant, defaults={"quantity": quantity}
+        )
+
+        if not created:
+            new_quantity = cart_item.quantity + quantity
+            if variant.quantity < new_quantity:
+                return Response(
+                    {"detail": f"Only {variant.quantity} {variant.product.name} available in stock."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            cart_item.quantity = new_quantity
+            cart_item.save()
+
+        return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["delete"], url_path="items/(?P<item_id>[^/.]+)")
+    def remove_item(self, request, item_id=None):
+        cart = self.get_cart()
+        try:
+            item = cart.items.get(id=item_id)
+            item.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except CartItem.DoesNotExist:
+            return Response(
+                {"detail": "Cart item not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+    @action(detail=False, methods=["post"])
+    def clear(self, request):
+        cart = self.get_cart()
+        cart.items.all().delete()
+        return Response({"detail": "Cart cleared."}, status=status.HTTP_200_OK)
+

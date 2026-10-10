@@ -10,7 +10,7 @@ from rest_framework_simplejwt.views import (
 )
 
 from store.views import ProductViewSet, CategoryViewSet, BrandViewSet, OrderViewSet, AddressViewSet, WishlistViewSet, \
-    ReviewViewSet, StripeWebhookView, CouponViewSet
+    ReviewViewSet, StripeWebhookView, CouponViewSet, CartViewSet
 
 router = DefaultRouter()
 router.register(r'products', ProductViewSet, basename='products')
@@ -21,6 +21,7 @@ router.register(r'addresses', AddressViewSet, basename='addresses')
 router.register(r'wishlist', WishlistViewSet, basename='wishlist')
 router.register(r'reviews', ReviewViewSet, basename='reviews')
 router.register(r'coupons', CouponViewSet, basename='coupons')
+router.register(r'cart', CartViewSet, basename='cart')
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/", include("rest_framework.urls")),
