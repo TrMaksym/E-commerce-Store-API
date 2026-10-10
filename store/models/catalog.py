@@ -55,7 +55,7 @@ class ProductVariant(models.Model):
     )
     sku = models.CharField(max_length=64, unique=True)
     name = models.CharField(
-        max_length=120, help_text="Наприклад: Gold / 19cm або Silver / 21cm"
+        max_length=120, help_text="Example: Size: Medium, Color: Blue"
     )
     price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField(default=0)
