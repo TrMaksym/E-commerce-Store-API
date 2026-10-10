@@ -26,7 +26,7 @@ from store.serializers import (
     ProductDetailSerializer,
     ProductListSerializer,
     ReviewSerializer,
-    WishlistSerializer, CartSerializer,
+    WishlistSerializer, CartSerializer, AddToCartSerializer,
 )
 
 from .filters import ProductFilter
@@ -374,6 +374,27 @@ class CouponViewSet(viewsets.ModelViewSet):
         })
 
 
+@extend_schema(tags=["Cart"])
+@extend_schema_view(
+    list=extend_schema(
+        summary="Get current user cart",
+        responses={200: CartSerializer},
+    ),
+    add=extend_schema(
+        summary="Add item to cart or increase quantity",
+        request=AddToCartSerializer,
+        responses={200: CartSerializer},
+    ),
+    remove_item=extend_schema(
+        summary="Remove specific item from cart",
+        responses={204: None},
+    ),
+    clear=extend_schema(
+        summary="Clear all items from cart",
+        request=None,
+        responses={200: {"type": "object", "properties": {"detail": {"type": "string"}}}},
+    ),
+)
 class CartViewSet(viewsets.GenericViewSet):
     def get_cart(self):
         cart, _ = Cart.objects.get_or_create(user=self.request.user)
