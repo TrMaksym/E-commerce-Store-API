@@ -10,8 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 import os
+from datetime import timedelta
 from pathlib import Path
 
+import stripe
+from django.conf.global_settings import MEDIA_URL
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -29,7 +32,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-load_dotenv()
+load_dotenv(BASE_DIR / ".env")
 
 AUTH_USER_MODEL = 'users.User'
 
@@ -42,13 +45,14 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "rest_framework.authtoken",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "django_filters",
     "drf_spectacular",
+    "users",
     "store",
-    "users"
 ]
-
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -70,6 +74,15 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 12,
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": (
+    timedelta(days=1) if DEBUG else timedelta(minutes=15)
+),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 ROOT_URLCONF = "config.urls"
@@ -138,6 +151,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = "static/"
+
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 
 # Email
