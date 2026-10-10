@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from .catalog import Product
 
 
@@ -20,6 +20,14 @@ class Address(models.Model):
 
     class Meta:
         verbose_name_plural = "Addresses"
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            if self.is_default:
+                Address.objects.filter(
+                    user=self.user, is_default=True
+                ).exclude(pk=self.pk).update(is_default=False)
+            super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.street_address}, {self.city}, {self.country}"

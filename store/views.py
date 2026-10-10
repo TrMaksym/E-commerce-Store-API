@@ -119,6 +119,9 @@ class AddressViewSet(viewsets.ModelViewSet):
             return Address.objects.all()
         return Address.objects.filter(user=self.request.user)
 
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
 
 @extend_schema_view(
     list=extend_schema(tags=["Orders"]),
