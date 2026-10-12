@@ -305,10 +305,6 @@ class StripeWebhookView(APIView):
                         order.coupon.times_used = F("times_used") + 1
                         order.coupon.save(update_fields=["times_used"])
 
-                    for item in order.items.select_related("variant"):
-                        item.variant.quantity = F("quantity") - item.quantity
-                        item.variant.save(update_fields=["quantity"])
-
                     payment = Payment.objects.filter(transaction_id=session["id"]).first()
                     if payment:
                         payment.status = Payment.Status.PAID
@@ -402,7 +398,7 @@ class CartViewSet(viewsets.GenericViewSet):
 
     def list(self, request):
         cart = self.get_cart()
-        serializer = CartSerializer(cart, many=True)
+        serializer = CartSerializer(cart)
         return Response(serializer.data)
 
     @action(detail=False, methods=["post"])

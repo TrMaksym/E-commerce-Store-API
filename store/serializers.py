@@ -278,6 +278,7 @@ class CheckoutSerializer(serializers.Serializer):
     def validate(self, attrs):
         request = self.context.get("request")
         items = attrs.get("items", [])
+
         if not items:
             if not request or not request.user.is_authenticated:
                 raise serializers.ValidationError({"items": "At least one item is required"})
@@ -296,31 +297,18 @@ class CheckoutSerializer(serializers.Serializer):
         else:
             attrs["from_cart"] = False
 
-            for item in attrs["items"]:
-                variant = item["variant"]
-                quantity = item["quantity"]
-
-                variant = ProductVariant.objects.select_for_update().get(id=variant.id)
-                variant.quantity -= quantity
-                variant.save(update_fields=["quantity"])
-
-                if quantity <= 0:
-                    raise serializers.ValidationError({
-                        "items": f"Quantity for {variant} must be greater than 0"
-                    })
-                if variant.quantity < quantity:
-                    raise serializers.ValidationError({
-                        "items": f"Only {variant.quantity} available in stock"
-                    })
-                if quantity <= 0:
-                    raise serializers.ValidationError({
-                        "items": f"Quantity for {variant.name} must be greater than 0"
-                    })
+        for item in attrs["items"]:
+            variant = item["variant"]
+            quantity = item["quantity"]
+            if quantity <= 0:
+                raise serializers.ValidationError({"items": f"Quantity for {variant.name} must be greater than 0."})
+            if variant.quantity < quantity:
+                raise serializers.ValidationError({"items": f"Only {variant.quantity} of {variant.name} available in stock."})
 
         return attrs
 
     def create(self, validated_data):
-        from_cart = validated_data.pop("from_cart")
+        from_cart = validated_data.pop("from_cart", False)
         items = validated_data.pop("items")
         coupon_code = validated_data.pop("coupon_code", None)
         request = self.context.get("request")
@@ -353,9 +341,13 @@ class CheckoutSerializer(serializers.Serializer):
                 status=Order.Status.PENDING,
                 **validated_data
             )
+
             for item in items:
-                variant = item["variant"]
+                variant = ProductVariant.objects.select_for_update().get(id=item["variant"].id)
                 quantity = item["quantity"]
+
+                if variant.quantity < quantity:
+                    raise serializers.ValidationError(f"Not enough stock for {variant.name}")
 
                 OrderItem.objects.create(
                     order=order,
@@ -367,9 +359,7 @@ class CheckoutSerializer(serializers.Serializer):
                 variant.save(update_fields=["quantity"])
 
             if from_cart and user:
-                cart = Cart.objects.filter(user=user).first()
-                if cart:
-                    cart.items.all().delete()
+                CartItem.objects.filter(cart__user=user).delete()
 
             return order
 
