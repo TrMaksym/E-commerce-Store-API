@@ -408,7 +408,7 @@ class CartViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["post"])
     def add(self, request):
         cart = self.get_cart()
-        serializer = CartSerializer(cart, data=request.data)
+        serializer = AddToCartSerializer(cart, data=request.data)
         serializer.is_valid(raise_exception=True)
 
         variant = serializer.validated_data["variant"]

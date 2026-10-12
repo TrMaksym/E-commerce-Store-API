@@ -266,7 +266,7 @@ class CheckoutSerializer(serializers.Serializer):
     contact_phone = serializers.CharField(max_length=20)
     contact_email = serializers.EmailField()
     coupon_code = serializers.CharField(required=False, allow_blank=True)
-    items = CheckoutItemSerializer(many=True)
+    items = CheckoutItemSerializer(many=True, required=False)
 
     def validate_shipping_id(self, value):
         request = self.context.get("request")
@@ -275,24 +275,52 @@ class CheckoutSerializer(serializers.Serializer):
                 raise serializers.ValidationError("You cannot use another user's address.")
         return value
 
-    def validate_items(self, items):
+    def validate(self, attrs):
+        request = self.context.get("request")
+        items = attrs.get("items", [])
         if not items:
-            raise serializers.ValidationError("Cart cannot be empty.")
+            if not request or not request.user.is_authenticated:
+                raise serializers.ValidationError({"items": "At least one item is required"})
+            try:
+                cart = Cart.objects.prefetch_related("items__variant").get(user=request.user)
+            except Cart.DoesNotExist:
+                raise serializers.ValidationError({"items": "Your cart is empty"})
+            cart_items = list(cart.items.all())
+            if not cart_items:
+                raise serializers.ValidationError({"items": "Your cart is empty"})
+            attrs["items"] = [
+                {"variant": item.variant, "quantity": item.quantity}
+                for item in cart_items
+            ]
+            attrs["from_cart"] = True
+        else:
+            attrs["from_cart"] = False
 
-        for item in items:
-            variant = item["variant"]
-            quantity = item["quantity"]
+            for item in attrs["items"]:
+                variant = item["variant"]
+                quantity = item["quantity"]
 
-            if quantity <= 0:
-                raise serializers.ValidationError(f"Quantity for variant {variant.id} must be greater than 0.")
-            if variant.quantity < quantity:
-                raise serializers.ValidationError(
-                    f"Insufficient quantity for variant {variant.name}. Available: {variant.quantity}."
-                )
+                variant = ProductVariant.objects.select_for_update().get(id=variant.id)
+                variant.quantity -= quantity
+                variant.save(update_fields=["quantity"])
 
-        return items
+                if quantity <= 0:
+                    raise serializers.ValidationError({
+                        "items": f"Quantity for {variant} must be greater than 0"
+                    })
+                if variant.quantity < quantity:
+                    raise serializers.ValidationError({
+                        "items": f"Only {variant.quantity} available in stock"
+                    })
+                if quantity <= 0:
+                    raise serializers.ValidationError({
+                        "items": f"Quantity for {variant.name} must be greater than 0"
+                    })
+
+        return attrs
 
     def create(self, validated_data):
+        from_cart = validated_data.pop("from_cart")
         items = validated_data.pop("items")
         coupon_code = validated_data.pop("coupon_code", None)
         request = self.context.get("request")
@@ -337,6 +365,11 @@ class CheckoutSerializer(serializers.Serializer):
                 )
                 variant.quantity -= quantity
                 variant.save(update_fields=["quantity"])
+
+            if from_cart and user:
+                cart = Cart.objects.filter(user=user).first()
+                if cart:
+                    cart.items.all().delete()
 
             return order
 
