@@ -37,6 +37,7 @@ from .permissions import (
     IsOwnerOrAdmin,
     IsReviewAuthorOrAdmin,
 )
+from .tasks import send_order_confirmation_email
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -309,6 +310,8 @@ class StripeWebhookView(APIView):
                     if payment:
                         payment.status = Payment.Status.PAID
                         payment.save(update_fields=["status"])
+
+                send_order_confirmation_email.delay(order.id)
 
         return Response(status=status.HTTP_200_OK)
 
