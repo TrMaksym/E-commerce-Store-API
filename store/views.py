@@ -1,9 +1,9 @@
 import stripe
-from django.db import transaction
-from django.db.models import F, Min
+from django.conf import settings
+from django.db.models import Min
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
-from rest_framework import mixins, status, viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import (
@@ -14,11 +14,28 @@ from rest_framework.permissions import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from config import settings
-from store.models.orders import Order
+from store.filters import ProductFilter
+from store.models import (
+    Address,
+    Brand,
+    Category,
+    Coupon,
+    Order,
+    Payment,
+    Product,
+    Review,
+    Wishlist,
+)
+from store.models.cart import Cart, CartItem
+from store.permissions import (
+    IsAdminOrReadOnly,
+    IsOwnerOrAdmin,
+)
 from store.serializers import (
+    AddToCartSerializer,
     AddressSerializer,
     BrandSerializer,
+    CartSerializer,
     CategorySerializer,
     CheckoutSerializer,
     CouponSerializer,
@@ -26,18 +43,9 @@ from store.serializers import (
     ProductDetailSerializer,
     ProductListSerializer,
     ReviewSerializer,
-    WishlistSerializer, CartSerializer, AddToCartSerializer,
+    WishlistSerializer,
 )
-
-from .filters import ProductFilter
-from .models import Address, Brand, Category, Coupon, Payment, Product, Review, Wishlist
-from .models.cart import Cart, CartItem
-from .permissions import (
-    IsAdminOrReadOnly,
-    IsOwnerOrAdmin,
-    IsReviewAuthorOrAdmin,
-)
-from .tasks import send_order_confirmation_email
+from store.services.stripe_service import StripeService
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -163,96 +171,47 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["Orders"],
-        request=CheckoutSerializer,
-        responses={201: OrderSerializer},
-        description="Checkout order for authenticated users and guests",
-    )
-    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
-    def checkout(self, request):
-        serializer = CheckoutSerializer(
-            data=request.data, context={"request": request}
-        )
-        serializer.is_valid(raise_exception=True)
-        order = serializer.save()
-        return Response(
-            OrderSerializer(order).data, status=status.HTTP_201_CREATED
-        )
-
-    @extend_schema(
-        tags=["Orders"],
         responses={
             200: {"type": "object", "properties": {"checkout_url": {"type": "string"}}},
             400: {"type": "object", "properties": {"detail": {"type": "string"}}},
-            403: {"type": "object", "properties": {"detail": {"type": "string"}}},
             404: {"type": "object", "properties": {"detail": {"type": "string"}}},
         },
         description="Create Stripe Checkout Session for order payment",
     )
-    @action(detail=True, methods=["post"], permission_classes=[AllowAny])
-    def pay(self, request, pk=None):
-        order = Order.objects.filter(pk=pk).first()
-        if not order:
+    @action(detail=True, methods=["post"], url_path="checkout")
+    def checkout(self, request, pk=None):
+        order = self.get_object()
+
+        if order.status == Order.Status.PAID:
             return Response(
-                {"detail": "Order not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if order.user is not None:
-            if request.user != order.user and not request.user.is_staff:
-                return Response(
-                    {"detail": "You do not have permission to perform this action."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-        else:
-            guest_email = request.data.get("email")
-            if not guest_email or guest_email.lower() != order.contact_email.lower():
-                return Response(
-                    {"detail": "Contact email is not valid for this order."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-        if order.status != Order.Status.PENDING:
-            return Response(
-                {"detail": "Order is not pending payment"},
+                {"detail": "This order is already paid."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        amount_cents = int(order.total_price * 100)
         try:
-            session = stripe.checkout.Session.create(
-                line_items=[
-                    {
-                        "price_data": {
-                            "currency": "usd",
-                            "unit_amount": amount_cents,
-                            "product_data": {
-                                "name": f"Order #{order.id}",
-                            },
-                        },
-                        "quantity": 1,
-                    }
-                ],
-                mode="payment",
-                metadata={"order_id": str(order.id)},
-                success_url=f"{request.scheme}://{request.get_host()}/api/docs/?status=success",
-                cancel_url=f"{request.scheme}://{request.get_host()}/api/docs/?status=cancel",
-            )
-        except Exception as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
+            session = StripeService.create_checkout_session(
+                order=order,
+                success_url=settings.STRIPE_SUCCESS_URL + "?session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=settings.STRIPE_CANCEL_URL,
             )
 
-        Payment.objects.create(
-            order=order,
-            provider="stripe",
-            transaction_id=session.id,
-            amount=order.total_price,
-            status="pending",
-        )
-        return Response({"checkout_url": session.url}, status=status.HTTP_200_OK)
+            Payment.objects.update_or_create(
+                order=order,
+                defaults={
+                    "provider": "stripe",
+                    "transaction_id": session.id,
+                    "amount": order.total_price,
+                    "status": "pending",
+                },
+            )
+
+            return Response({"checkout_url": session.url}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def create(self, request, *args, **kwargs):
         return Response(
-            {"detail": "Order creation is not allowed. Use /checkout/ instead."},
+            {"detail": "Order creation directly via POST /orders/ is not allowed. Use the cart checkout flow."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
 
@@ -285,33 +244,15 @@ class StripeWebhookView(APIView):
     def post(self, request, *args, **kwargs):
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
+
         try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
-            )
+            event = StripeService.construct_webhook_event(payload, sig_header)
         except (ValueError, stripe.error.SignatureVerificationError):
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
-            order_id = session.get("metadata", {}).get("order_id")
-            order = Order.objects.filter(id=order_id).first()
-
-            if order and order.status != Order.Status.PAID:
-                with transaction.atomic():
-                    order.status = Order.Status.PAID
-                    order.save(update_fields=["status"])
-
-                    if order.coupon:
-                        order.coupon.times_used = F("times_used") + 1
-                        order.coupon.save(update_fields=["times_used"])
-
-                    payment = Payment.objects.filter(transaction_id=session["id"]).first()
-                    if payment:
-                        payment.status = Payment.Status.PAID
-                        payment.save(update_fields=["status"])
-
-                send_order_confirmation_email.delay(order.id)
+            StripeService.handle_checkout_completed(session)
 
         return Response(status=status.HTTP_200_OK)
 
@@ -367,10 +308,12 @@ class CouponViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return Response({
-            "code": coupon.code,
-            "discount_percentage": coupon.discount_percentage,
-        })
+        return Response(
+            {
+                "code": coupon.code,
+                "discount_percentage": coupon.discount_percentage,
+            }
+        )
 
 
 @extend_schema(tags=["Cart"])
@@ -395,6 +338,8 @@ class CouponViewSet(viewsets.ModelViewSet):
     ),
 )
 class CartViewSet(viewsets.GenericViewSet):
+    permission_classes = [IsAuthenticated]
+
     def get_cart(self):
         cart, _ = Cart.objects.get_or_create(user=self.request.user)
         return cart
@@ -407,7 +352,7 @@ class CartViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["post"])
     def add(self, request):
         cart = self.get_cart()
-        serializer = AddToCartSerializer(cart, data=request.data)
+        serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         variant = serializer.validated_data["variant"]
@@ -429,7 +374,7 @@ class CartViewSet(viewsets.GenericViewSet):
 
         return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["delete"], url_path="items/(?P<item_id>[^/.]+)")
+    @action(detail=False, methods=["delete"], url_path="items/(?P<item_id>[^/.]+)")
     def remove_item(self, request, item_id=None):
         cart = self.get_cart()
         try:
@@ -447,4 +392,3 @@ class CartViewSet(viewsets.GenericViewSet):
         cart = self.get_cart()
         cart.items.all().delete()
         return Response({"detail": "Cart cleared."}, status=status.HTTP_200_OK)
-
