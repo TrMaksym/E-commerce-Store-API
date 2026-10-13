@@ -1,6 +1,8 @@
 import stripe
 from django.conf import settings
 from django.db.models import Min
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import status, viewsets
@@ -49,7 +51,8 @@ from store.services.stripe_service import StripeService
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-
+@method_decorator(cache_page(60 * 15), name="list")
+@method_decorator(cache_page(60 * 15), name="retrieve")
 @extend_schema(tags=["Categories"])
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -57,6 +60,8 @@ class CategoryViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAdminOrReadOnly,)
 
 
+@method_decorator(cache_page(60 * 15), name="list")
+@method_decorator(cache_page(60 * 15), name="retrieve")
 @extend_schema(tags=["Brands"])
 class BrandViewSet(viewsets.ModelViewSet):
     queryset = Brand.objects.all()
@@ -64,6 +69,8 @@ class BrandViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAdminOrReadOnly,)
 
 
+@method_decorator(cache_page(60 * 15), name="list")
+@method_decorator(cache_page(60 * 15), name="retrieve")
 @extend_schema(tags=["Products"])
 class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAdminOrReadOnly,)
