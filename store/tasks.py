@@ -48,6 +48,3 @@ def cancel_expired_orders():
                 item.variant.quantity = F("quantity") + item.quantity
                 item.variant.save(update_fields=["quantity"])
     return f"Canceled {len(expired_orders)} expired orders"
-
-
-
