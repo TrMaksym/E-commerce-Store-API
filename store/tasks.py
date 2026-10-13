@@ -1,3 +1,9 @@
+from datetime import timedelta
+
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+
 from celery import shared_task
 from django.core.mail import send_mail
 from store.models import Order
@@ -26,3 +32,22 @@ def send_order_confirmation_email(order_id):
         fail_silently=False,
     )
     return f"Confirmation sent for Order #{order.id}"
+
+@shared_task
+def cancel_expired_orders():
+    cutoff = timezone.now() - timedelta(hours=24)
+    expired_orders = Order.objects.filter(
+        status=Order.Status.PENDING,
+        created_at__lte=cutoff
+    ).prefetch_related("items")
+    for order in expired_orders:
+        with transaction.atomic():
+            order.status = Order.Status.CANCELED
+            order.save(update_fields=["status"])
+            for item in order.items.all():
+                item.variant.quantity = F("quantity") + item.quantity
+                item.variant.save(update_fields=["quantity"])
+    return f"Canceled {len(expired_orders)} expired orders"
+
+
+
